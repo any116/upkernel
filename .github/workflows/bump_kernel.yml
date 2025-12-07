@@ -77,6 +77,7 @@ jobs:
         # 获取必要的补丁
         wget https://raw.githubusercontent.com/immortalwrt/immortalwrt/refs/heads/openwrt-24.10/target/linux/generic/backport-6.6/823-v6.12-0003-nvmem-layouts-add-U-Boot-env-layout.patch -O target/linux/generic/backport-6.6/823-v6.12-0003-nvmem-layouts-add-U-Boot-env-layout.patch 
         wget https://raw.githubusercontent.com/immortalwrt/immortalwrt/refs/heads/openwrt-24.10/target/linux/generic/backport-6.6/068-01-v6.7-netkit-bpf-Add-bpf-programmable-net-device.patch -O target/linux/generic/backport-6.6/068-01-v6.7-netkit-bpf-Add-bpf-programmable-net-device.patch
+        sed -i '101,109d' target/linux/mediatek/patches-6.6/999-2770-net-phy-add-mxl862xx-built-in-phy-support.patch
         
         # 应用本地补丁
         git apply ${{ github.workspace }}/1.patch
