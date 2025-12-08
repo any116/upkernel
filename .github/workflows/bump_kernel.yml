@@ -132,7 +132,8 @@ jobs:
         cp -f defconfig/mt7981-ax3000.config .config
         make defconfig -j$(nproc)
         echo "Refreshing kernel patches..."
-        make target/linux/refresh V=s
+        #make target/linux/refresh V=s
+        make target/linux/refresh TARGETS="generic mediatek" V=s
 
     - name: Generate diff
       id: generate_diff
