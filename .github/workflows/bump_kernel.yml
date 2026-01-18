@@ -100,6 +100,8 @@ jobs:
         echo "Removed 847-v6.17-Revert-leds-trigger-netdev-Configure-LED-blink-inter.patch"
         find target/linux -name "999-serial-01-tty-serial-8250-fix-clock-setting-for-mediatek-serial.patch" -delete
         echo "Removed 999-serial-01-tty-serial-8250-fix-clock-setting-for-mediatek-serial.patch"
+        find target/linux -name "600-v6.10-net-Remove-conditional-threaded-NAPI-wakeup-based-on.patch" -delete
+        echo "Removed 600-v6.10-net-Remove-conditional-threaded-NAPI-wakeup-based-on.patch"
 
     - name: Update kernel version in include/kernel-6.6
       env:
