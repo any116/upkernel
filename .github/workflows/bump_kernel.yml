@@ -1,0 +1,176 @@
+name: Kernel 6.6 Minor Version Upgrade
+
+on:
+  workflow_dispatch:
+    inputs:
+      minor_version:
+        description: 'Target minor version. Leave empty for latest'
+        required: false
+        default: ''
+
+permissions: write-all
+
+jobs:
+  kernel-upgrade:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        token: ${{ secrets.GITHUB_TOKEN }}
+        fetch-depth: 0
+
+    - name: Setup environment
+      run: |
+        sudo apt update -y
+        sudo apt install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+          bzip2 ccache clang cmake cpio curl device-tree-compiler ecj fastjar flex gawk gettext gcc-multilib \
+          g++-multilib git gnutls-dev gperf haveged help2man intltool lib32gcc-s1 libc6-dev-i386 libelf-dev \
+          libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses-dev libpython3-dev \
+          libreadline-dev libssl-dev libtool libyaml-dev libz-dev lld llvm lrzsz mkisofs msmtp nano \
+          ninja-build p7zip p7zip-full patch pkgconf python3 python3-pip python3-ply python3-docutils \
+          python3-pyelftools qemu-utils quilt re2c rsync scons squashfs-tools subversion swig texinfo uglifyjs \
+          upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd jq
+
+    - name: Configure Git
+      run: |
+        git config --global user.name "GitHub Actions"
+        git config --global user.email "actions@github.com"
+
+    - name: Determine kernel version
+      id: kernel-version
+      run: |
+        # 如果输入为空，则获取最新版本
+        if [ -z "${{ github.event.inputs.minor_version }}" ]; then
+          echo "Fetching latest stable kernel version..."
+          # 获取最新的6.6稳定版本
+          LATEST=$(curl -s https://www.kernel.org/releases.json | jq -r '.releases[] | select(.version | startswith("6.6.")) | .version' | sort -V | tail -1)
+          MINOR_VERSION="${LATEST##*.}"
+        else
+          MINOR_VERSION="${{ github.event.inputs.minor_version }}"
+        fi
+        
+        if [ -z "$MINOR_VERSION" ]; then
+          echo "ERROR: Failed to determine kernel version"
+          exit 1
+        fi
+        
+        echo "Using kernel version: 6.6.$MINOR_VERSION"
+        echo "minor_version=$MINOR_VERSION" >> $GITHUB_OUTPUT
+        echo "full_version=6.6.$MINOR_VERSION" >> $GITHUB_OUTPUT
+
+    - name: Clone fresh ImmortalWrt
+      env:
+        MINOR_VERSION: ${{ steps.kernel-version.outputs.minor_version }}
+      run: |
+        echo "Target kernel version: 6.6.$MINOR_VERSION"
+        
+        rm -rf immortalwrt
+        git clone -b openwrt-24.10-6.6 https://github.com/padavanonly/immortalwrt-mt798x-6.6 immortalwrt
+        
+        cd immortalwrt
+        rx_buf=target/linux/mediatek/patches-6.6/999-2773-net-ethernet-mtk_eth_soc-add-dynamic-rx-buffer-adjustment-support.patch
+        wget -O- "https://git01.mediatek.com/plugins/gitiles/openwrt/feeds/mtk-openwrt-feeds/+/d2c0504d0e8fc8f88faea45ef92eba952bab230f/autobuild/unified/filogic/24.10/files/target/linux/mediatek/patches-6.6/999-2773-net-ethernet-mtk_eth_soc-add-dynamic-rx-buffer-adjustment-support.patch?format=TEXT" | base64 -di > "${rx_buf}"
+        fix_casn=target/linux/mediatek/patches-6.6/999-spi-nand-03-Fix-CASN-page-field-spanning-issues.patch
+        wget -O- "https://git01.mediatek.com/plugins/gitiles/openwrt/feeds/mtk-openwrt-feeds/+/922bc13f23a6e3fbd1153923164d3670e0620f7e/autobuild/unified/filogic/24.10/files/target/linux/mediatek/patches-6.6/999-spi-nand-03-Fix-CASN-page-field-spanning-issues.patch?format=TEXT" | base64 -di > "${fix_casn}"
+        fix_fs=target/linux/mediatek/patches-6.6/999-fs-ubifs-01-Check-c-dirty_-n-p-n_cnt-and-c-nroot-state-und.patch
+        wget -O- "https://git01.mediatek.com/plugins/gitiles/openwrt/feeds/mtk-openwrt-feeds/+/3d3c54c94f901ae736bfa1312d42a77b2cadb293/autobuild/unified/filogic/24.10/files/target/linux/mediatek/patches-6.6/999-fs-ubifs-01-Check-c-dirty_-n-p-n_cnt-and-c-nroot-state-und.patch?format=TEXT" | base64 -di > "${fix_fs}"
+        #git checkout 1a92a0788427b49db16fc1725bed54667fb7c921
+        # 获取必要的补丁
+        wget https://raw.githubusercontent.com/immortalwrt/immortalwrt/refs/heads/openwrt-24.10/target/linux/generic/backport-6.6/823-v6.12-0003-nvmem-layouts-add-U-Boot-env-layout.patch -O target/linux/generic/backport-6.6/823-v6.12-0003-nvmem-layouts-add-U-Boot-env-layout.patch
+        wget https://raw.githubusercontent.com/immortalwrt/immortalwrt/refs/heads/openwrt-24.10/target/linux/generic/backport-6.6/068-01-v6.7-netkit-bpf-Add-bpf-programmable-net-device.patch -O target/linux/generic/backport-6.6/068-01-v6.7-netkit-bpf-Add-bpf-programmable-net-device.patch
+        wget https://raw.githubusercontent.com/openwrt/openwrt/refs/heads/openwrt-24.10/target/linux/mediatek/patches-6.6/733-01-net-phy-mediatek-Re-organize-MediaTek-ethernet-phy-d.patch -O target/linux/mediatek/patches-6.6/733-01-net-phy-mediatek-Re-organize-MediaTek-ethernet-phy-d.patch
+        sed -i '101,109d' target/linux/mediatek/patches-6.6/999-2770-net-phy-add-mxl862xx-built-in-phy-support.patch
+        
+        # 应用本地补丁
+        patch --verbose -p1 < ${{ github.workspace }}/1.patch
+        git status
+
+    - name: Remove problematic patches
+      run: |
+        cd immortalwrt
+        echo "Removing problematic patches..."
+        
+        find target/linux -name "001-powerpc-kernel-Fix-pcc_save_regs-inclusion.patch" -delete
+        echo "Removed 001-powerpc-kernel-Fix-pcc_save_regs-inclusion.patch"
+        find target/linux -name "650-Revert-ipv6-save-dontfrag-in-cork.patch" -delete
+        echo "Removed 650-Revert-ipv6-save-dontfrag-in-cork.patch"
+        find target/linux -name "847-v6.17-Revert-leds-trigger-netdev-Configure-LED-blink-inter.patch" -delete
+        echo "Removed 847-v6.17-Revert-leds-trigger-netdev-Configure-LED-blink-inter.patch"
+        find target/linux -name "999-serial-01-tty-serial-8250-fix-clock-setting-for-mediatek-serial.patch" -delete
+        echo "Removed 999-serial-01-tty-serial-8250-fix-clock-setting-for-mediatek-serial.patch"
+        #find target/linux -name "600-v6.10-net-Remove-conditional-threaded-NAPI-wakeup-based-on.patch" -delete
+        #echo "Removed 600-v6.10-net-Remove-conditional-threaded-NAPI-wakeup-based-on.patch"
+        #find target/linux -name "601-v6.10-net-Allow-to-use-SMP-threads-for-backlog-NAPI.patch" -delete
+        #echo "Removed 601-v6.10-net-Allow-to-use-SMP-threads-for-backlog-NAPI.patch"
+
+    - name: Update kernel version in include/kernel-6.6
+      env:
+        MINOR_VERSION: ${{ steps.kernel-version.outputs.minor_version }}
+        FULL_VERSION: ${{ steps.kernel-version.outputs.full_version }}
+      run: |
+        cd immortalwrt
+        
+        # 更新 LINUX_VERSION-6.6
+        sed -i "s/LINUX_VERSION-6.6 = \..*/LINUX_VERSION-6.6 = .$MINOR_VERSION/" include/kernel-6.6
+        
+        # 获取新版本的内核哈希
+        echo "Fetching hash for kernel $FULL_VERSION..."
+        KERNEL_HASH=$(curl -sL "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${FULL_VERSION}.tar.xz" | sha256sum | cut -d' ' -f1)
+        
+        if [ -n "$KERNEL_HASH" ]; then
+          echo "Kernel hash: $KERNEL_HASH"
+          
+          # 删除旧的哈希行
+          sed -i "/LINUX_KERNEL_HASH-6.6\.[0-9]*/d" include/kernel-6.6
+          
+          # 添加新的哈希行
+          echo "LINUX_KERNEL_HASH-$FULL_VERSION = $KERNEL_HASH" >> include/kernel-6.6
+        else
+          echo "Warning: Could not fetch kernel hash"
+        fi
+        
+        echo "Updated kernel-6.6 file:"
+        cat include/kernel-6.6
+
+    - name: Refresh kernel patches
+      run: |
+        cd immortalwrt
+        cp -f defconfig/mt7981-ax3000.config .config
+        make defconfig -j$(nproc)
+        echo "Refreshing kernel patches..."
+        #make target/linux/refresh V=s
+        make target/linux/refresh TARGETS="generic mediatek" V=s
+
+    - name: Generate diff
+      id: generate_diff
+      env:
+        MINOR_VERSION: ${{ steps.kernel-version.outputs.minor_version }}
+      run: |
+        cd immortalwrt
+        
+        # 生成补丁文件
+        git add .
+        git diff --staged > ../kernel-6.6-upgrade.diff
+        
+        echo "diff_file=kernel-6.6-upgrade.diff" >> $GITHUB_OUTPUT
+        echo "release_tag=kernel-6.6-$MINOR_VERSION" >> $GITHUB_OUTPUT
+
+    - name: Delete old Releases and Workflows
+      uses: ophub/delete-releases-workflows@main
+      with:
+        gh_token: ${{secrets.GITHUB_TOKEN}}
+        delete_releases: true
+        releases_keep_latest: 0
+        delete_tags: true
+        delete_workflows: true
+        workflows_keep_day: 0
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v2.2.2
+      with:
+        tag_name: up
+        body: "Automated kernel upgrade patch for 6.6.${{ steps.kernel-version.outputs.minor_version }}"
+        files: ${{ steps.generate_diff.outputs.diff_file }}
